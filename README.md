@@ -1,6 +1,6 @@
 # bs_router
 
-beanstalkd driven CBSD sample
+Beanstalkd driven CBSD
 
 # Installation
 
