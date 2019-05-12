@@ -2,6 +2,8 @@
 
 Beanstalkd driven CBSD
 
+Client + sample: https://github.com/cbsd/bs_router-client
+
 # Installation
 
 setenv GOPATH $( realpath . )
