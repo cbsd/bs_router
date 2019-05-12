@@ -5,7 +5,6 @@ import (
 	"time"
 	"encoding/json"
 	"log"
-	"sync"
 	"github.com/beanstalkd/go-beanstalk"
 )
 
@@ -20,9 +19,18 @@ type BeanstalkConfig struct {
 	PublishTimeout		int	`json:"publish_timeout"`
 }
 
-func beanstalkdPublish(c *beanstalk.Conn, tube string, body []byte, PublishTimeout int) error {
+func beanstalkdPublish(config BeanstalkConfig, tube string, body []byte) error {
+
+	amqpURI := config.Uri
+	c, err := beanstalk.Dial("tcp", amqpURI)
+
+	if err != nil {
+		log.Printf("Publish/callback: unable connect to beanstalkd broker:%s", err)
+		return nil
+	}
+
 	mytube := &beanstalk.Tube{Conn: c, Name: tube}
-	id, err := mytube.Put([]byte(body), 1, 0, time.Duration(PublishTimeout)*time.Second)
+	id, err := mytube.Put([]byte(body), 1, 0, time.Duration(config.PublishTimeout)*time.Second)
 	if err != nil {
 		fmt.Printf("\nPublish err: %d\n",err)
 		return err
@@ -40,6 +48,37 @@ func beanstalkdLoop(config BeanstalkConfig) error {
 	}
 	return nil
 }
+
+func WakeOnJob(ch chan bool, config BeanstalkConfig, id uint64, body []byte) {
+
+	fmt.Printf("\nwake up and delete job id: %d\n",id)
+	comment := Comment{}
+	fmt.Printf("\nWI: %d\n",id)
+	comment.JobID = id
+	response := fmt.Sprintf("%v", comment.JobID)
+	fmt.Printf("response %s\n", response)
+	//callback
+	log.Printf("recv msg: %s", string(body))
+	err := json.Unmarshal(body, &comment)
+	if err != nil {
+			log.Printf("json decode error %s", err)
+	}
+	callbackQueueName := fmt.Sprintf("%s%d",config.ReplyTubePrefix,comment.JobID)
+	fmt.Printf("callback queue name: %s\n",callbackQueueName)
+	err, cbsdTask := DoProcess(&comment)
+	if err != nil {
+		fmt.Println("doprocess error:", err)
+		panic(err)
+	}
+	b, err := json.Marshal(cbsdTask)
+	if err != nil {
+		fmt.Println("error:", err)
+	}
+	fmt.Printf("FINE: %s\n",b)
+	err = beanstalkdPublish(config,callbackQueueName,b)
+	ch <- true
+}
+
 
 func beanstalkdConsume(config BeanstalkConfig) error {
 
@@ -69,56 +108,10 @@ func beanstalkdConsume(config BeanstalkConfig) error {
 		if id == 0 {
 			continue
 		}
+		c.Delete(id)
 
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-
-		go func() {
-			if id == 0 {
-				wg.Done()
-				return
-			}
-			fmt.Printf("\nwake up and delete job id: %d\n",id)
-			c.Delete(id)
-			comment := Comment{}
-			fmt.Printf("\nWI: %d\n",id)
-			comment.JobID = id
-			response := fmt.Sprintf("%v", comment.JobID)
-			fmt.Printf("response %s\n", response)
-			//callback
-			log.Printf("recv msg: %s", string(body))
-			err = json.Unmarshal(body, &comment)
-			if err != nil {
-					log.Printf("json decode error %s", err)
-					wg.Done()
-					return
-			}
-
-			callbackQueueName := fmt.Sprintf("%s%d",config.ReplyTubePrefix,comment.JobID)
-			fmt.Printf("callback queue name: %s\n",callbackQueueName)
-
-			err, cbsdTask := DoProcess(&comment)
-			if err != nil {
-				fmt.Println("doprocess error:", err)
-				wg.Done()
-				panic(err)
-			}
-
-			b, err := json.Marshal(cbsdTask)
-
-			if err != nil {
-				fmt.Println("error:", err)
-			}
-
-			fmt.Printf("FINE: %s\n",b)
-
-			err = beanstalkdPublish(c,callbackQueueName,b,config.PublishTimeout)
-			wg.Done()
-			return
-		}()
-
-		wg.Wait()
-
+		ch := make(chan bool)
+		go WakeOnJob(ch, config, id, body)
 	}
 
 	return nil
