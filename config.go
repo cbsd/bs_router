@@ -7,9 +7,10 @@ import (
 )
 
 type Config struct {
-	CbsdEnv		string	`json:"cbsdenv"`
-	CbsdColor	bool	`json:"cbsdcolor"`
 	Broker		string	`json:"broker"`
+	CbsdColor	bool	`json:"cbsdcolor"`
+	CbsdEnv		string	`json:"cbsdenv"`
+	Logfile		string	`json:"logfile"`
 	BeanstalkConfig		`json:"beanstalkd"`
 }
 
@@ -31,6 +32,5 @@ func LoadConfiguration(file string) (Config,error) {
 		return config, err
 	}
 
-	fmt.Printf("Using config file: %s\n", file)
 	return config, err
 }

@@ -6,7 +6,7 @@ type Comment struct {
 	Command string
 	JobID uint64
 	Date time.Time
-	CommandArgs map[string]string
+	CommandArgs map[string]interface{}
 }
 
 type CommentProtocol interface {
@@ -19,7 +19,10 @@ type CommentProcessor interface {
 }
 
 type CbsdTask struct {
-	Progress int
-	ErrCode int
-	Message string
+	DskGuid		string
+	ErrCode		int
+	Guid		string
+	Message		string
+	Progress	int
+	Vnc		string
 }

@@ -8,18 +8,46 @@ import (
 	"time"
 	"syscall"
 	"io/ioutil"
+	"reflect"
 )
 
-func createKeyValuePairs(m map[string]string) string {
+func createKeyValuePairs(m map[string]interface{}) (string,string) {
+	jname := new(bytes.Buffer)
 	b := new(bytes.Buffer)
+	var err error
 	for key, value := range m {
-		_, err := fmt.Fprintf(b, " %s=\"%s\"", key, value)
-		if err != nil {
-			panic(err)
+		switch v := reflect.ValueOf(value); v.Kind() {
+			case reflect.String:
+				_, err = fmt.Fprintf(b, " %s=\"%s\"", key, value)
+				switch key {
+					case "jname": fmt.Fprintf(jname,"%s",value)
+//					default: fmt.Printf("PAIRS: %s, %s\n",key,value)
+				}
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				_, err = fmt.Fprintf(b, " %s=\"%d\"", key, value)
+			case reflect.Float32, reflect.Float64:
+				_, err = fmt.Fprintf(b, " %s=\"%f\"", key, value)
+			default:
+				_, err = fmt.Fprintf(b, " %s=\"%s\"", key, value)
+				//loogging!
+//				_, err = fmt.Fprintf(b, " %s=\"%s\"", key, v.Kind(), value)
+//				fmt.Printf("unhandled kind %s", v.Kind())
 		}
+
+//		_, err := fmt.Fprintf(b, " %s=\"%s\"", key, value)
+
+		if err != nil {
+			return "", ""
+		}
+
+//		switch key {
+//			case "jname": fmt.Fprintf(jname, "%s", value)
+//		}
+
 	}
-	return b.String()
+	return b.String(), jname.String()
 }
+
 
 func CreateDirIfNotExist(dir string) {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
@@ -30,12 +58,15 @@ func CreateDirIfNotExist(dir string) {
 	}
 }
 
-func DoProcess(comment *Comment) (error, *CbsdTask) {
+func DoProcess(comment *Comment, logdir string) (error, *CbsdTask) {
+	var vm_guid string
+	var dsk_guid string
 	dt := time.Now()
 
-	CreateDirIfNotExist("log")
+	Infof("broker log did: %s\n", logdir)
+	CreateDirIfNotExist(logdir)
 
-	filePath := fmt.Sprintf("log/%s_%s_%d.txt", dt.Format(time.RFC3339), comment.Command, comment.JobID)
+	filePath := fmt.Sprintf("%s/%s_%s_%d.txt", logdir, dt.Format(time.RFC3339), comment.Command, comment.JobID)
 	commentFile, err := os.Create(filePath)
 	if err != nil {
 		return err, nil
@@ -47,7 +78,7 @@ func DoProcess(comment *Comment) (error, *CbsdTask) {
 
 	fmt.Printf("JobID %d\n", comment.JobID)
 
-	cbsdArgs := createKeyValuePairs(comment.CommandArgs)
+	cbsdArgs, jname := createKeyValuePairs(comment.CommandArgs)
 
 	cmdstr := fmt.Sprintf("/usr/local/bin/cbsd %s %s", comment.Command, cbsdArgs)
 	_, err = fmt.Fprintf(commentFile, "%s\n", cmdstr)
@@ -59,7 +90,7 @@ func DoProcess(comment *Comment) (error, *CbsdTask) {
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 
-	filePath = fmt.Sprintf("log/%d.txt", comment.JobID)
+	filePath = fmt.Sprintf("%s/%d.txt", logdir, comment.JobID)
 
 	stdoutFile, err := os.Create(filePath)
 	if err != nil {
@@ -101,7 +132,29 @@ func DoProcess(comment *Comment) (error, *CbsdTask) {
 	// progress always 100 for completed/failed command
 	cbsdTask.Progress = 100
 
-	fileLogPath := fmt.Sprintf("log/%d.txt", comment.JobID)
+	if len(jname)>0 {
+		vm_guid = bget(jname,"vm_zfs_guid")
+		if len(vm_guid) > 0 {
+			Infof("GUID found [%s]\n", vm_guid)
+		} else {
+			vm_guid = "0"
+		}
+		// get zfs guid for first disk
+		dsk_guid = bhyvedsk(jname,"dsk_path=dsk1 dsk_zfs_guid")
+		if len(dsk_guid) > 0 {
+			Infof("DSK GUID found [%s]\n", dsk_guid)
+		} else {
+			dsk_guid = "0"
+		}
+	} else {
+		Infof("no GUID detected [%s]\n", vm_guid)
+		vm_guid = "0"
+		dsk_guid = "0"
+	}
+
+	cbsdTask.Guid = string(vm_guid)
+	cbsdTask.DskGuid = string(dsk_guid)
+	fileLogPath := fmt.Sprintf("%s/%d.txt", logdir, comment.JobID)
 
 	b, err := ioutil.ReadFile(fileLogPath) // just pass the file name
 	if err != nil {
@@ -109,6 +162,22 @@ func DoProcess(comment *Comment) (error, *CbsdTask) {
 	}
 
 	cbsdTask.Message = string(b) // convert content to a 'string'
+
+	Infof("CMD: [%s]\n", comment.Command)
+
+	// add extra field for VNC when bstart
+	switch comment.Command {
+		case "bstart":
+			var vnc string
+			vnc = bget(jname,"vnc")
+
+			if len(vnc) > 0 {
+				Infof("get VNC [%s]\n", vnc)
+				cbsdTask.Vnc = vnc
+			} else {
+				Infof("no VNC detected\n")
+			}
+	}
 
 	return nil, &cbsdTask
 }
