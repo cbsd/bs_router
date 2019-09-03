@@ -50,21 +50,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	log_init(config.Logfile)
+
 	if len(config.CbsdEnv) > 0 {
 		*cbsdEnv=config.CbsdEnv
 	}
+	if len(config.Broker) > 0 {
+		*broker=config.Broker
+	}
 
 	if !check_cbsd_env(*cbsdEnv) {
-		fmt.Println("CBSD env check error")
-		os.Exit(1)
+		Fatal("CBSD env check error")
 	}
 
 	if config.CbsdColor == false {
 		os.Setenv("NOCOLOR", "1")
 	}
 
-	fmt.Printf("CBSD Env: %s\n", *cbsdEnv)
-	fmt.Printf("Broker engine: %s\n", *broker)
+	Infof("Using config file: %s\n", *configFile)
+	Infof("CBSD Env: %s\n", *cbsdEnv)
+	Infof("Broker engine: %s\n", *broker)
+	Infof("Logfile: %s\n", config.Logfile)
+	Infof("MQ logdir: %s\n", config.BeanstalkConfig.LogDir)
 
 	os.Setenv("cbsd_workdir", *cbsdEnv)
 	os.Setenv("workdir", *cbsdEnv)
