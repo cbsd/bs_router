@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 	"encoding/json"
-	"log"
 	"github.com/beanstalkd/go-beanstalk"
 )
 
@@ -17,6 +16,7 @@ type BeanstalkConfig struct {
 	ReconnectTimeout	int	`json:"reconnect_timeout"`
 	ReserveTimeout		int	`json:"reserve_timeout"`
 	PublishTimeout		int	`json:"publish_timeout"`
+	LogDir			string	`json:"logdir"`
 }
 
 func beanstalkdPublish(config BeanstalkConfig, tube string, body []byte) error {
@@ -25,17 +25,17 @@ func beanstalkdPublish(config BeanstalkConfig, tube string, body []byte) error {
 	c, err := beanstalk.Dial("tcp", amqpURI)
 
 	if err != nil {
-		log.Printf("Publish/callback: unable connect to beanstalkd broker:%s", err)
+		Infof("Publish/callback: unable connect to beanstalkd broker:%s", err)
 		return nil
 	}
 
 	mytube := &beanstalk.Tube{Conn: c, Name: tube}
 	id, err := mytube.Put([]byte(body), 1, 0, time.Duration(config.PublishTimeout)*time.Second)
 	if err != nil {
-		fmt.Printf("\nPublish err: %d\n",err)
+		Infof("\nPublish err: %d\n",err)
 		return err
 	}
-	fmt.Printf("\nPublish id: %d\n",id)
+	Infof("\nPublish id: %d\n",id)
 
 	return nil
 }
@@ -43,7 +43,7 @@ func beanstalkdPublish(config BeanstalkConfig, tube string, body []byte) error {
 func beanstalkdLoop(config BeanstalkConfig) error {
 	for {
 		beanstalkdConsume(config)
-		log.Printf("broker disconnected, sleep and retry:%d\n", config.ReconnectTimeout)
+		Infof("broker disconnected, sleep and retry:%d\n", config.ReconnectTimeout)
 		time.Sleep(time.Duration(config.ReconnectTimeout) * time.Second)
 	}
 	return nil
@@ -51,30 +51,30 @@ func beanstalkdLoop(config BeanstalkConfig) error {
 
 func WakeOnJob(ch chan bool, config BeanstalkConfig, id uint64, body []byte) {
 
-	fmt.Printf("\nwake up and delete job id: %d\n",id)
+	Infof("\nwake up and delete job id: %d\n",id)
 	comment := Comment{}
-	fmt.Printf("\nWI: %d\n",id)
+	Infof("\nWI: %d\n",id)
 	comment.JobID = id
 	response := fmt.Sprintf("%v", comment.JobID)
-	fmt.Printf("response %s\n", response)
+	Infof("response %s\n", response)
 	//callback
-	log.Printf("recv msg: %s", string(body))
+	Infof("recv msg: %s", string(body))
 	err := json.Unmarshal(body, &comment)
 	if err != nil {
-			log.Printf("json decode error %s", err)
+			Infof("json decode error %s", err)
 	}
 	callbackQueueName := fmt.Sprintf("%s%d",config.ReplyTubePrefix,comment.JobID)
-	fmt.Printf("callback queue name: %s\n",callbackQueueName)
-	err, cbsdTask := DoProcess(&comment)
+	Infof("callback queue name: %s\n",callbackQueueName)
+	err, cbsdTask := DoProcess(&comment, config.LogDir)
 	if err != nil {
-		fmt.Println("doprocess error:", err)
+		Errorf("doprocess error:", err)
 		panic(err)
 	}
 	b, err := json.Marshal(cbsdTask)
 	if err != nil {
-		fmt.Println("error:", err)
+		Errorf("error:", err)
 	}
-	fmt.Printf("FINE: %s\n",b)
+	Infof("FINE: %s\n",b)
 	err = beanstalkdPublish(config,callbackQueueName,b)
 	ch <- true
 }
@@ -88,11 +88,11 @@ func beanstalkdConsume(config BeanstalkConfig) error {
 	c, err := beanstalk.Dial("tcp", amqpURI)
 
 	if err != nil {
-		log.Printf("Unable connect to beanstalkd broker:%s", err)
+		Infof("Unable connect to beanstalkd broker:%s", err)
 		return nil
 	}
 
-	log.Printf("Subscribe tube: %s, reserve timeout: %d", tube, config.ReserveTimeout)
+	Infof("Subscribe tube: %s, reserve timeout: %d", tube, config.ReserveTimeout)
 
 	c.TubeSet = *beanstalk.NewTubeSet(c, tube)
 
@@ -102,7 +102,7 @@ func beanstalkdConsume(config BeanstalkConfig) error {
 		id, body, err := c.Reserve(time.Duration(config.ReserveTimeout) * time.Second)
 
 		if err != nil {
-			fmt.Printf("\nid: %d, res: %s\n",id, err.Error())
+			Infof("\nid: %d, res: %s\n",id, err.Error())
 		}
 
 		if id == 0 {
